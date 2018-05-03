@@ -2,7 +2,8 @@
 """
 # Author: coorty
 
-This is a coarse solution for `Kaggle: Avito Demand Prediction Challenge(Predict demand for an online classified ad)(https://www.kaggle.com/c/avito-demand-prediction)`
+This is a coarse solution for `Kaggle: Avito Demand Prediction Challenge(Predict demand for an online classified ad)
+(https://www.kaggle.com/c/avito-demand-prediction)`
 
 The rmse is 0.2263.
 
