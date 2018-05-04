@@ -1,16 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-# Author: coorty
+Created on Tue May  1 14:49:31 2018
 
-This is a coarse solution for `Kaggle: Avito Demand Prediction Challenge(Predict demand for an online classified ad)
-(https://www.kaggle.com/c/avito-demand-prediction)`
-
-The rmse is 0.2263.
-
-
-------------
-MIT License.
-
+@author: Administrator
 """
 import numpy as np
 import pandas as pd
@@ -20,6 +12,7 @@ from tqdm import tqdm
 from contextlib import contextmanager
 from operator import itemgetter
 
+import xgboost as xgb
 import lightgbm as lgb
 from nltk.corpus import stopwords
 
@@ -54,6 +47,9 @@ def data_preprocess(data):
     """ Perform data procession
     
     """
+    ### On `param_1`(76% is null), `param_2`(86% is null), `param_3` (89% is null)
+    # This three params are text-type, and most of them are empty.
+    # The `city` 
     ### On `description` and `title` (text type)
     data['description'].fillna('', inplace=True)
     data['title'].fillna('', inplace=True)
@@ -69,16 +65,16 @@ def data_preprocess(data):
     ### On `city`      (categorical type, 1752-unique-values on whole dataset, no null)
     data['city'] = le.fit_transform(data['city'])
     
-    ### On `region`    (categorical type, 28-unique-values on whloe dataset, no null)
+    ### OK On `region`    (categorical type, 28-unique-values on whloe dataset, no null)
     data['region'] = le.fit_transform(data['region'])
     
-    ### On `user_type` (categorical type, 3-unique-values on whloe dataset, no null)
+    ### OK On `user_type` (categorical type, 3-unique-values on whloe dataset, no null)
     data['user_type'] = le.fit_transform(data['user_type'])
     
-    ### On `category_name` (categorical type, 47-unique-values on whloe dataset, no null)
+    ### OK On `category_name` (categorical type, 47-unique-values on whloe dataset, no null)
     data['category_name'] = le.fit_transform(data['category_name'])
     
-    ### On `parent_category_name` (categorical type, 9-unique-values on whloe dataset, no null)
+    ### OK On `parent_category_name` (categorical type, 9-unique-values on whloe dataset, no null)
     data['parent_category_name'] = le.fit_transform(data['parent_category_name'])
     
     ### On `item_seq_number` (categorical numerical type, 1,2,...,)
@@ -89,13 +85,13 @@ def data_preprocess(data):
     data['has_image'] = data['image'].notnull().astype('int')
     
     ### On `price` (numerical type, mean=307410.4, has some null)
-    # Compute average price of each groups and fill the null
+    # Compute average price of each group and fill the null
     data['price'] = data[['city','region','user_type','price']].groupby(['city','region','user_type']).\
                                             transform(lambda x: x.fillna(x.mean()))
-	data['price'] = np.log1p(data['price'])
+    data['price'] = np.log1p(data['price'])
 
     ### Not use `image_top_1` (Avito's classification code for the image.)
-    ### Not use `param_1`(76% is null), `param_2`(86% is null), `param_3` (89% is null)
+    
 
     return ['month', 'day', 'dayofweek', 'city', 'region', 'user_type', 'category_name', 
             'parent_category_name', 'item_seq_number', 'has_image', 'price']
@@ -120,16 +116,41 @@ def lgb_train(train_x, val_x, train_y, val_y):
     lgtrain = lgb.Dataset(train_x, label=train_y)
     lgval   = lgb.Dataset(val_x, label=val_y)
     
-    evals_result = {}
     model = lgb.train(params, lgtrain, 5000, valid_sets=[lgval], 
-                      verbose_eval=20, evals_result=evals_result)
+                      verbose_eval=20)
     
     train_pred = model.predict(data=train_x, num_iteration=model.best_iteration)
     val_pred   = model.predict(data=val_x, num_iteration=model.best_iteration)
     print('rmse on trainset is: {:.5f}'.format(rmse(train_pred, train_y)))
     print('rmse on validation set is: {:.5f}'.format(rmse(val_pred, val_y)))
     
-    return model, evals_result
+    return model
+    
+
+def xgboost_train(train_x, val_x, train_y, val_y):
+    params = {
+            'n_estimators': 400,
+            'n_jobs': -1,
+            'objective': 'reg:linear',
+            'learning_rate': 0.1,
+            'subsample': .75,
+            'max_depth': 5,
+            }
+    
+    watchlist = [(xgb.DMatrix(train_x, train_y),'train'),(xgb.DMatrix(val_x, val_y),'valid')]
+    
+    evals_result = {}
+    model = xgb.train(params=params, dtrain=xgb.DMatrix(train_x, train_y),
+                      num_boost_round=1000, evals=watchlist, early_stopping_rounds=25,
+                      evals_result=evals_result, verbose_eval=5)
+        
+    train_pred = model.predict(data=train_x, num_iteration=model.best_iteration)
+    val_pred   = model.predict(data=val_x, num_iteration=model.best_iteration)
+    
+    print('rmse on trainset is: {:.5f}'.format(rmse(train_pred, train_y)))
+    print('rmse on validation set is: {:.5f}'.format(rmse(val_pred, val_y)))
+    
+    return model
     
 
 
@@ -148,29 +169,32 @@ if __name__ == '__main__':
         vectorizer = make_union(
                 make_field_pipeline('description', 
                                     TfidfVectorizer(max_features=50000,stop_words=stop_words, ngram_range=(1,2)),
-                                    TruncatedSVD(n_components=5, algorithm='arpack')),
+                                    TruncatedSVD(n_components=50, algorithm='arpack')),
                 make_field_pipeline('title', 
-                                    TfidfVectorizer(max_features=10000,stop_words=stop_words, ngram_range=(1,2)),
-                                    TruncatedSVD(n_components=5, algorithm='arpack')),
+                                    TfidfVectorizer(max_features=50000,stop_words=stop_words, ngram_range=(1,2)),
+                                    TruncatedSVD(n_components=50, algorithm='arpack')),
                 make_field_pipeline('description',
                                     CountVectorizer(max_features=50000,stop_words=stop_words, ngram_range=(1,2), max_df=.95, min_df=2),
-                                    LatentDirichletAllocation(n_components=5)),
+                                    LatentDirichletAllocation(n_components=50)),
                 make_field_pipeline('title',
-                                    CountVectorizer(max_features=10000,stop_words=stop_words, ngram_range=(1,2), max_df=.95, min_df=2),
-                                    LatentDirichletAllocation(n_components=5)),                 
+                                    CountVectorizer(max_features=50000,stop_words=stop_words, ngram_range=(1,2), max_df=.95, min_df=2),
+                                    LatentDirichletAllocation(n_components=50)),                 
                 make_field_pipeline(other_fields)
                 )
                 
         all_feats = vectorizer.fit_transform(merge)
         del merge
-        gc.collect
+        gc.collect()
         
-    # train & test features   
-    train_x, train_y = all_feats[:n_train, :], train['deal_probability']
+    # train & test features
+#    fi = 
+#    index = np.squeeze(np.argwhere(fi>=400))
+    train_x, train_y = all_feats[:n_train, :], train['deal_probability'].values
     test_x = all_feats[n_train:, :]
                 
     with timer('Model train'):
-        lgb_model, evals_result = lgb_train(*train_test_split(train_x, train_y, test_size=0.20, random_state=42))
+        lgb_model = lgb_train(*train_test_split(train_x, train_y, test_size=0.20, random_state=42))
+#        lgb_model = xgboost_train(*train_test_split(train_x, train_y, test_size=0.20, random_state=42))
         
     with timer('Model test'):        
         test_pred = lgb_model.predict(data=test_x, num_iteration=lgb_model.best_iteration)
@@ -184,3 +208,39 @@ if __name__ == '__main__':
 
     print('Done !')
     
+    
+    
+"""
+------------------------------
+[Load data] Begin: 2018-05-03 17:19:30
+[Load data] End  : 2018-05-03 17:20:30
+[Load data] done cost 59.1 s
+------------------------------
+[Extract text features] Begin: 2018-05-03 17:20:30
+[Extract text features] End  : 2018-05-04 02:54:29
+[Extract text features] done cost 34439.7 s
+------------------------------
+[Model train] Begin: 2018-05-04 02:54:29
+rmse on trainset is: 0.19068
+rmse on validation set is: 0.22531
+[Model train] End  : 2018-05-04 03:03:43
+[Model train] done cost 553.8 s
+------------------------------
+[Model test] Begin: 2018-05-04 03:03:43
+[Model test] End  : 2018-05-04 03:03:59
+[Model test] done cost 15.6 s
+------------------------------
+[Write results] Begin: 2018-05-04 03:03:59
+[Write results] End  : 2018-05-04 03:04:01
+[Write results] done cost 1.8 s
+Done !
+"""
+    
+
+
+
+
+    
+
+
+
